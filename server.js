@@ -107,13 +107,17 @@ function normalizeProducts(payload) {
 }
 
 function tokenize(text) {
-  return String(text)
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
+  return normalizeForMatch(text)
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
     .filter((token) => token.length > 1);
+}
+
+function normalizeForMatch(text) {
+  return String(text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
 }
 
 function scoreMatch(query, target) {
@@ -236,14 +240,20 @@ function groupByEan(products) {
   };
 }
 
-function filterGroupedByEan(rows, query, threshold = 0.55) {
+function filterGroupedByEan(rows, query, brandFilter = '', threshold = 0.55) {
+  const normalizedBrandFilter = normalizeForMatch(brandFilter).trim();
+
   return rows
     .map((row) => {
       const searchableText = `${row.unifiedDescription || ''} ${row.unifiedName || ''} ${row.brand || ''}`;
       const eanMatchScore = scoreMatch(query, searchableText);
-      return { ...row, eanMatchScore };
+      const normalizedRowBrand = normalizeForMatch(row.brand || '');
+      const brandMatches = normalizedBrandFilter
+        ? normalizedRowBrand.includes(normalizedBrandFilter)
+        : true;
+      return { ...row, eanMatchScore, brandMatches };
     })
-    .filter((row) => row.eanMatchScore >= threshold)
+    .filter((row) => row.brandMatches && row.eanMatchScore >= threshold)
     .sort((a, b) => b.eanMatchScore - a.eanMatchScore);
 }
 
@@ -367,6 +377,7 @@ const server = http.createServer(async (req, res) => {
 
   if (url.pathname === '/api/search' && req.method === 'GET') {
     const product = (url.searchParams.get('product') || '').trim();
+    const brand = (url.searchParams.get('brand') || '').trim();
     if (!product) {
       sendJson(res, 400, { error: 'Falta query param: product' });
       return;
@@ -377,10 +388,11 @@ const server = http.createServer(async (req, res) => {
       const rawPayload = await fetchJson(apiUrl);
       const rawResults = normalizeProducts(rawPayload);
       const groupedByEan = groupByEan(rawResults);
-      const groupedByEanFiltered = filterGroupedByEan(groupedByEan.rows, product);
+      const groupedByEanFiltered = filterGroupedByEan(groupedByEan.rows, product, brand);
 
       sendJson(res, 200, {
         query: product,
+        brandFilter: brand,
         meta: {
           rawCount: rawResults.length,
           groupedByEanCount: groupedByEan.rows.length,

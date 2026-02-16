@@ -1,5 +1,6 @@
 const searchForm = document.getElementById('searchForm');
 const productInput = document.getElementById('productInput');
+const brandSelect = document.getElementById('brandSelect');
 const statusBox = document.getElementById('status');
 
 const rawBody = document.querySelector('#rawTable tbody');
@@ -159,9 +160,10 @@ function renderGroupedByEan(rows, supermarkets) {
   renderGroupedByEanTable(eanHead, eanBody, rows, supermarkets, false);
 }
 
-function renderGroupedByEanFiltered(rows, supermarkets, totalCount) {
+function renderGroupedByEanFiltered(rows, supermarkets, totalCount, activeBrandFilter) {
   renderGroupedByEanTable(eanFilteredHead, eanFilteredBody, rows, supermarkets, true, true);
-  eanFilteredCount.textContent = `Quedaron ${rows.length} de ${totalCount} productos agrupados por EAN.`;
+  const brandText = activeBrandFilter ? ` (marca: ${activeBrandFilter})` : '';
+  eanFilteredCount.textContent = `Quedaron ${rows.length} de ${totalCount} productos agrupados por EAN${brandText}.`;
 }
 
 function clearTables() {
@@ -223,6 +225,7 @@ searchForm.addEventListener('submit', async (event) => {
   event.preventDefault();
 
   const product = productInput.value.trim();
+  const brand = brandSelect ? brandSelect.value.trim() : '';
   if (!product) return;
 
   clearTables();
@@ -232,7 +235,9 @@ searchForm.addEventListener('submit', async (event) => {
   setPreviewHtml('');
 
   try {
-    const response = await fetch(`/api/search?product=${encodeURIComponent(product)}`);
+    const query = new URLSearchParams({ product });
+    if (brand) query.set('brand', brand);
+    const response = await fetch(`/api/search?${query.toString()}`);
     const data = await response.json();
 
     if (!response.ok) {
@@ -244,11 +249,13 @@ searchForm.addEventListener('submit', async (event) => {
     renderGroupedByEanFiltered(
       data.groupedByEanFiltered || [],
       data.supermarkets || [],
-      data.meta?.groupedByEanCount ?? 0
+      data.meta?.groupedByEanCount ?? 0,
+      data.brandFilter || ''
     );
 
     const meta = data.meta || {};
-    setStatus(`Listo. API: ${meta.rawCount ?? 0} | EAN: ${meta.groupedByEanCount ?? 0} | EAN filtrados: ${meta.groupedByEanFilteredCount ?? 0}`);
+    const brandText = data.brandFilter ? ` | Marca: ${data.brandFilter}` : '';
+    setStatus(`Listo. API: ${meta.rawCount ?? 0} | EAN: ${meta.groupedByEanCount ?? 0} | EAN filtrados: ${meta.groupedByEanFilteredCount ?? 0}${brandText}`);
   } catch (error) {
     clearTables();
     setStatus(`Error: ${error.message}`, true);

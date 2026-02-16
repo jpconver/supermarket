@@ -43,13 +43,20 @@ h1 {
   flex-wrap: wrap;
 }
 
-.search-form input {
+.search-form input,
+.search-form select {
   flex: 1;
   min-width: 260px;
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 10px;
   font-size: 15px;
+}
+
+.search-form select {
+  flex: 0 0 220px;
+  min-width: 220px;
+  background: #fff;
 }
 
 .search-form button {
