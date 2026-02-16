@@ -81,6 +81,41 @@ h1 {
   margin-bottom: 10px;
 }
 
+#llmJsonInput {
+  width: 100%;
+  min-height: 120px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 13px;
+  font-family: Consolas, "Courier New", monospace;
+  resize: vertical;
+  margin-bottom: 8px;
+}
+
+.import-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+#applyPromosBtn {
+  border: none;
+  border-radius: 8px;
+  background: #1d4ed8;
+  color: #fff;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+#applyPromosBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 #exportLlmBtn {
   border: none;
   border-radius: 8px;
@@ -168,6 +203,15 @@ th {
 .badge.no {
   background: #fff7ed;
   color: var(--warn);
+}
+
+.badge.promo {
+  background: #ede9fe;
+  color: #5b21b6;
+}
+
+.row-has-promo {
+  background: #f0fdf4;
 }
 
 .small {

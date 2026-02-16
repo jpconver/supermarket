@@ -12,6 +12,9 @@ const eanFilteredCount = document.getElementById('eanFilteredCount');
 const exportLlmBtn = document.getElementById('exportLlmBtn');
 const exportProgress = document.getElementById('exportProgress');
 const exportDownloadLink = document.getElementById('exportDownloadLink');
+const llmJsonInput = document.getElementById('llmJsonInput');
+const applyPromosBtn = document.getElementById('applyPromosBtn');
+const promoApplyStatus = document.getElementById('promoApplyStatus');
 const scrapeStatusBox = document.getElementById('scrapeStatus');
 const scrapeMeta = document.getElementById('scrapeMeta');
 const scrapeOutput = document.getElementById('scrapeOutput');
@@ -19,6 +22,12 @@ const scrapePreview = document.getElementById('scrapePreview');
 
 let latestSearchData = null;
 let exportPollingTimer = null;
+let promoLookup = {
+  byEanStore: new Map(),
+  byUrl: new Map(),
+  importedCount: 0,
+  activeCount: 0
+};
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -77,6 +86,22 @@ function setScrapePanel(metaText, content) {
   scrapeOutput.textContent = content || '';
 }
 
+function setPromoStatus(text, isError = false) {
+  promoApplyStatus.textContent = text || '';
+  promoApplyStatus.style.color = isError ? '#b42318' : '#576779';
+}
+
+function resetPromoUi() {
+  promoLookup = {
+    byEanStore: new Map(),
+    byUrl: new Map(),
+    importedCount: 0,
+    activeCount: 0
+  };
+  if (llmJsonInput) llmJsonInput.value = '';
+  setPromoStatus('');
+}
+
 function resetExportUi() {
   exportProgress.textContent = '';
   exportDownloadLink.style.display = 'none';
@@ -113,6 +138,103 @@ function setPreviewHtml(html) {
 </html>`;
 }
 
+function normalizeForKey(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+}
+
+function extractJsonFromText(rawText) {
+  const text = String(rawText || '').trim();
+  if (!text) {
+    throw new Error('No hay texto para procesar');
+  }
+
+  const direct = (() => {
+    try { return JSON.parse(text); } catch { return null; }
+  })();
+  if (direct) return direct;
+
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced && fenced[1]) {
+    try { return JSON.parse(fenced[1].trim()); } catch { /* noop */ }
+  }
+
+  const firstArr = text.indexOf('[');
+  const lastArr = text.lastIndexOf(']');
+  if (firstArr !== -1 && lastArr > firstArr) {
+    const candidate = text.slice(firstArr, lastArr + 1);
+    try { return JSON.parse(candidate); } catch { /* noop */ }
+  }
+
+  throw new Error('No se pudo extraer JSON valido del texto pegado');
+}
+
+function normalizePromoItems(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (payload && Array.isArray(payload.items)) return payload.items;
+  if (payload && Array.isArray(payload.results)) return payload.results;
+  throw new Error('El JSON debe ser un array de items o contener items/results');
+}
+
+function buildPromoLookupFromItems(items) {
+  const byEanStore = new Map();
+  const byUrl = new Map();
+  let activeCount = 0;
+
+  items.forEach((rawItem) => {
+    if (!rawItem || typeof rawItem !== 'object') return;
+
+    const hasPromo = Boolean(rawItem.has_promo ?? rawItem.hasPromo);
+    if (!hasPromo) return;
+
+    const ean = String(rawItem.ean || '');
+    const store = String(rawItem.store || '');
+    const url = String(rawItem.url || '');
+    const promoType = String(rawItem.promo_type || rawItem.promoType || 'promo');
+    const promoText = String(rawItem.promo_text || rawItem.promoText || '');
+    const confidence = Number(rawItem.confidence);
+
+    const promo = {
+      ean,
+      store,
+      url,
+      promoType,
+      promoText,
+      confidence: Number.isFinite(confidence) ? confidence : null
+    };
+
+    const eanStoreKey = `${normalizeForKey(ean)}|${normalizeForKey(store)}`;
+    if (normalizeForKey(ean) && normalizeForKey(store)) {
+      byEanStore.set(eanStoreKey, promo);
+    }
+    if (normalizeForKey(url)) {
+      byUrl.set(normalizeForKey(url), promo);
+    }
+    activeCount += 1;
+  });
+
+  return {
+    byEanStore,
+    byUrl,
+    importedCount: items.length,
+    activeCount
+  };
+}
+
+function getPromoForCell(row, store, entry) {
+  const eanStoreKey = `${normalizeForKey(row.ean)}|${normalizeForKey(store)}`;
+  const byKey = promoLookup.byEanStore.get(eanStoreKey);
+  if (byKey) return byKey;
+
+  const byUrl = promoLookup.byUrl.get(normalizeForKey(entry?.link || ''));
+  if (byUrl) return byUrl;
+
+  return null;
+}
+
 function renderRaw(rows) {
   rawBody.innerHTML = rows.map((r) => `
     <tr>
@@ -129,7 +251,7 @@ function renderRaw(rows) {
   `).join('');
 }
 
-function renderGroupedByEanTable(headEl, bodyEl, rows, supermarkets, withMatchScore = false, withScrape = false) {
+function renderGroupedByEanTable(headEl, bodyEl, rows, supermarkets, withMatchScore = false, withScrape = false, withPromos = false) {
   const stores = Array.isArray(supermarkets) ? supermarkets : [];
   headEl.innerHTML = `
     <tr>
@@ -145,20 +267,26 @@ function renderGroupedByEanTable(headEl, bodyEl, rows, supermarkets, withMatchSc
   `;
 
   bodyEl.innerHTML = rows.map((row) => {
+    let rowHasPromo = false;
     const cellsByStore = stores.map((store) => {
       const entry = row.pricesBySupermarket?.[store];
       if (!entry) return '<td>-</td>';
 
       const priceText = formatPrice(entry.price, '-');
       const stockText = entry.availability ? '' : ' (sin stock)';
+      const promo = withPromos ? getPromoForCell(row, store, entry) : null;
+      if (promo) rowHasPromo = true;
+      const promoLabel = promo
+        ? `<div class="small"><span class="badge promo">${escapeHtml(promo.promoType || 'promo')}</span> ${escapeHtml(promo.promoText || '')}</div>`
+        : '';
       const scrapeBtn = withScrape && entry.link
         ? `<div><button type="button" class="mini-btn scrape-btn" data-url="${encodeURIComponent(entry.link)}">Ver HTML</button></div>`
         : '';
-      return `<td>${escapeHtml(priceText)}${escapeHtml(stockText)}${scrapeBtn}</td>`;
+      return `<td>${escapeHtml(priceText)}${escapeHtml(stockText)}${promoLabel}${scrapeBtn}</td>`;
     }).join('');
 
     return `
-      <tr>
+      <tr class="${rowHasPromo ? 'row-has-promo' : ''}">
         <td>${escapeHtml(row.ean || '-')}</td>
         <td>${escapeHtml(row.unifiedName || '-')}</td>
         <td>${escapeHtml(row.brand || '-')}</td>
@@ -177,7 +305,7 @@ function renderGroupedByEan(rows, supermarkets) {
 }
 
 function renderGroupedByEanFiltered(rows, supermarkets, totalCount, activeBrandFilter) {
-  renderGroupedByEanTable(eanFilteredHead, eanFilteredBody, rows, supermarkets, true, true);
+  renderGroupedByEanTable(eanFilteredHead, eanFilteredBody, rows, supermarkets, true, true, true);
   const brandText = activeBrandFilter ? ` (marca: ${activeBrandFilter})` : '';
   eanFilteredCount.textContent = `Quedaron ${rows.length} de ${totalCount} productos agrupados por EAN${brandText}.`;
 }
@@ -274,6 +402,30 @@ async function startLlmExport() {
   }
 }
 
+function applyPromosFromTextarea() {
+  if (!latestSearchData || !Array.isArray(latestSearchData.groupedByEanFiltered)) {
+    setPromoStatus('Primero realiza una busqueda.', true);
+    return;
+  }
+
+  try {
+    const parsed = extractJsonFromText(llmJsonInput.value);
+    const items = normalizePromoItems(parsed);
+    promoLookup = buildPromoLookupFromItems(items);
+
+    renderGroupedByEanFiltered(
+      latestSearchData.groupedByEanFiltered || [],
+      latestSearchData.supermarkets || [],
+      latestSearchData.meta?.groupedByEanCount ?? 0,
+      latestSearchData.brandFilter || ''
+    );
+
+    setPromoStatus(`Promos aplicadas: ${promoLookup.activeCount} de ${promoLookup.importedCount} items JSON.`);
+  } catch (error) {
+    setPromoStatus(`Error aplicando promos: ${error.message}`, true);
+  }
+}
+
 async function scrapeProductUrl(productUrl) {
   setScrapeStatus('Scrapeando producto con navegador...');
   setScrapePanel('', '');
@@ -324,6 +476,10 @@ exportLlmBtn.addEventListener('click', async () => {
   await startLlmExport();
 });
 
+applyPromosBtn.addEventListener('click', () => {
+  applyPromosFromTextarea();
+});
+
 searchForm.addEventListener('submit', async (event) => {
   event.preventDefault();
 
@@ -333,6 +489,7 @@ searchForm.addEventListener('submit', async (event) => {
 
   clearTables();
   latestSearchData = null;
+  resetPromoUi();
   setStatus('Buscando precios y evaluando ofertas...');
   setScrapeStatus('');
   setScrapePanel('', '');
@@ -366,6 +523,7 @@ searchForm.addEventListener('submit', async (event) => {
   } catch (error) {
     clearTables();
     latestSearchData = null;
+    resetPromoUi();
     resetExportUi();
     setStatus(`Error: ${error.message}`, true);
   }
