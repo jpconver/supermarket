@@ -9,10 +9,16 @@ const eanBody = document.querySelector('#eanTable tbody');
 const eanFilteredHead = document.querySelector('#eanFilteredTable thead');
 const eanFilteredBody = document.querySelector('#eanFilteredTable tbody');
 const eanFilteredCount = document.getElementById('eanFilteredCount');
+const exportLlmBtn = document.getElementById('exportLlmBtn');
+const exportProgress = document.getElementById('exportProgress');
+const exportDownloadLink = document.getElementById('exportDownloadLink');
 const scrapeStatusBox = document.getElementById('scrapeStatus');
 const scrapeMeta = document.getElementById('scrapeMeta');
 const scrapeOutput = document.getElementById('scrapeOutput');
 const scrapePreview = document.getElementById('scrapePreview');
+
+let latestSearchData = null;
+let exportPollingTimer = null;
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -69,6 +75,13 @@ function setScrapeStatus(text, isError = false) {
 function setScrapePanel(metaText, content) {
   scrapeMeta.textContent = metaText || '';
   scrapeOutput.textContent = content || '';
+}
+
+function resetExportUi() {
+  exportProgress.textContent = '';
+  exportDownloadLink.style.display = 'none';
+  exportDownloadLink.removeAttribute('href');
+  exportLlmBtn.disabled = false;
 }
 
 function sanitizeHtmlForPreview(html) {
@@ -178,6 +191,89 @@ function clearTables() {
   eanFilteredCount.textContent = '';
 }
 
+async function pollExportJob(jobId) {
+  try {
+    const response = await fetch(`/api/export-llm-status?id=${encodeURIComponent(jobId)}`);
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data?.error || 'No se pudo leer progreso');
+    }
+
+    const total = Number(data.total || 0);
+    const current = Number(data.current || 0);
+    const percent = total > 0 ? Math.round((current / total) * 100) : 0;
+    exportProgress.textContent = `${data.message || ''} ${total > 0 ? `(${current}/${total} - ${percent}%)` : ''}`.trim();
+
+    if (data.status === 'done') {
+      exportLlmBtn.disabled = false;
+      exportDownloadLink.href = `/api/export-llm-download?id=${encodeURIComponent(jobId)}`;
+      exportDownloadLink.style.display = 'inline';
+      exportProgress.textContent = `Completado (${current}/${total}).`;
+      exportPollingTimer = null;
+      return;
+    }
+
+    if (data.status === 'failed') {
+      exportLlmBtn.disabled = false;
+      exportProgress.textContent = `Error: ${data.message || 'fallo del proceso'}`;
+      exportPollingTimer = null;
+      return;
+    }
+
+    exportPollingTimer = setTimeout(() => {
+      pollExportJob(jobId);
+    }, 1200);
+  } catch (error) {
+    exportLlmBtn.disabled = false;
+    exportProgress.textContent = `Error consultando progreso: ${error.message}`;
+    exportPollingTimer = null;
+  }
+}
+
+async function startLlmExport() {
+  if (!latestSearchData || !Array.isArray(latestSearchData.groupedByEanFiltered)) {
+    exportProgress.textContent = 'Primero realiza una busqueda.';
+    return;
+  }
+
+  if (!latestSearchData.groupedByEanFiltered.length) {
+    exportProgress.textContent = 'No hay EAN filtrados para exportar.';
+    return;
+  }
+
+  if (exportPollingTimer) {
+    clearTimeout(exportPollingTimer);
+    exportPollingTimer = null;
+  }
+
+  exportLlmBtn.disabled = true;
+  exportDownloadLink.style.display = 'none';
+  exportProgress.textContent = 'Iniciando export...';
+
+  try {
+    const response = await fetch('/api/export-llm-start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: latestSearchData.query || '',
+        brandFilter: latestSearchData.brandFilter || '',
+        groupedByEanFiltered: latestSearchData.groupedByEanFiltered
+      })
+    });
+    const data = await response.json();
+
+    if (!response.ok || !data.jobId) {
+      throw new Error(data?.detail || data?.error || 'No se pudo iniciar export');
+    }
+
+    pollExportJob(data.jobId);
+  } catch (error) {
+    exportLlmBtn.disabled = false;
+    exportProgress.textContent = `Error iniciando export: ${error.message}`;
+  }
+}
+
 async function scrapeProductUrl(productUrl) {
   setScrapeStatus('Scrapeando producto con navegador...');
   setScrapePanel('', '');
@@ -224,6 +320,10 @@ eanFilteredBody.addEventListener('click', async (event) => {
   await scrapeProductUrl(productUrl);
 });
 
+exportLlmBtn.addEventListener('click', async () => {
+  await startLlmExport();
+});
+
 searchForm.addEventListener('submit', async (event) => {
   event.preventDefault();
 
@@ -232,10 +332,12 @@ searchForm.addEventListener('submit', async (event) => {
   if (!product) return;
 
   clearTables();
+  latestSearchData = null;
   setStatus('Buscando precios y evaluando ofertas...');
   setScrapeStatus('');
   setScrapePanel('', '');
   setPreviewHtml('');
+  resetExportUi();
 
   try {
     const query = new URLSearchParams({ product });
@@ -246,6 +348,8 @@ searchForm.addEventListener('submit', async (event) => {
     if (!response.ok) {
       throw new Error(data?.detail || data?.error || 'Error desconocido');
     }
+
+    latestSearchData = data;
 
     renderRaw(data.rawResults || []);
     renderGroupedByEan(data.groupedByEan || [], data.supermarkets || []);
@@ -261,6 +365,8 @@ searchForm.addEventListener('submit', async (event) => {
     setStatus(`Listo. API: ${meta.rawCount ?? 0} | EAN: ${meta.groupedByEanCount ?? 0} | EAN filtrados: ${meta.groupedByEanFilteredCount ?? 0}${brandText}`);
   } catch (error) {
     clearTables();
+    latestSearchData = null;
+    resetExportUi();
     setStatus(`Error: ${error.message}`, true);
   }
 });

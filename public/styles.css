@@ -73,6 +73,29 @@ h1 {
   background: var(--primary-dark);
 }
 
+.export-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+#exportLlmBtn {
+  border: none;
+  border-radius: 8px;
+  background: #0f766e;
+  color: #fff;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+#exportLlmBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .mini-btn {
   border: 1px solid var(--border);
   border-radius: 6px;
