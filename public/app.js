@@ -22,6 +22,7 @@ const scrapePreview = document.getElementById('scrapePreview');
 
 let latestSearchData = null;
 let exportPollingTimer = null;
+let filteredRowsList = [];
 let promoLookup = {
   byEanStore: new Map(),
   byUrl: new Map(),
@@ -253,6 +254,9 @@ function renderRaw(rows) {
 
 function renderGroupedByEanTable(headEl, bodyEl, rows, supermarkets, withMatchScore = false, withScrape = false, withPromos = false) {
   const stores = Array.isArray(supermarkets) ? supermarkets : [];
+  if (withMatchScore) {
+    filteredRowsList = Array.isArray(rows) ? [...rows] : [];
+  }
   headEl.innerHTML = `
     <tr>
       <th>EAN</th>
@@ -266,7 +270,7 @@ function renderGroupedByEanTable(headEl, bodyEl, rows, supermarkets, withMatchSc
     </tr>
   `;
 
-  bodyEl.innerHTML = rows.map((row) => {
+  bodyEl.innerHTML = rows.map((row, idx) => {
     let rowHasPromo = false;
     const cellsByStore = stores.map((store) => {
       const entry = row.pricesBySupermarket?.[store];
@@ -293,7 +297,7 @@ function renderGroupedByEanTable(headEl, bodyEl, rows, supermarkets, withMatchSc
         <td><span class="small">${escapeHtml(row.unifiedDescription || '-')}</span></td>
         <td>${row.sourceCount ?? '-'}</td>
         ${withMatchScore ? `<td>${scoreText(row.eanMatchScore)}</td>` : ''}
-        ${withScrape ? `<td>${row.representativeLink ? `<button type="button" class="mini-btn scrape-btn" data-url="${encodeURIComponent(row.representativeLink)}">Ver principal</button>` : '-'}</td>` : ''}
+        ${withScrape ? `<td>${row.representativeLink ? `<button type="button" class="mini-btn scrape-btn" data-url="${encodeURIComponent(row.representativeLink)}">Ver principal</button>` : '-'} ${withMatchScore ? `<button type="button" class="mini-btn llm-row-btn" data-row-idx="${idx}">TXT ChatGPT</button>` : ''}</td>` : ''}
         ${cellsByStore}
       </tr>
     `;
@@ -305,9 +309,118 @@ function renderGroupedByEan(rows, supermarkets) {
 }
 
 function renderGroupedByEanFiltered(rows, supermarkets, totalCount, activeBrandFilter) {
-  renderGroupedByEanTable(eanFilteredHead, eanFilteredBody, rows, supermarkets, true, true, true);
+  const stores = Array.isArray(supermarkets) ? supermarkets : [];
+  filteredRowsList = Array.isArray(rows) ? [...rows] : [];
+
+  eanFilteredHead.innerHTML = `
+    <tr>
+      <th>EAN</th>
+      <th>Producto unificado</th>
+      <th>Marca</th>
+      <th>Descripcion</th>
+      <th>Coincidencias</th>
+      <th>Match</th>
+      <th>Scraping</th>
+      ${stores.map((s) => `<th>${escapeHtml(s)}</th>`).join('')}
+    </tr>
+  `;
+
+  eanFilteredBody.innerHTML = '';
+  rows.forEach((row, idx) => {
+    const tr = document.createElement('tr');
+    let rowHasPromo = false;
+
+    const fixedCells = [
+      row.ean || '-',
+      row.unifiedName || '-',
+      row.brand || '-',
+      row.unifiedDescription || '-',
+      String(row.sourceCount ?? '-'),
+      scoreText(row.eanMatchScore)
+    ];
+
+    fixedCells.forEach((value, cellIdx) => {
+      const td = document.createElement('td');
+      if (cellIdx === 3) {
+        const span = document.createElement('span');
+        span.className = 'small';
+        span.textContent = String(value);
+        td.appendChild(span);
+      } else {
+        td.textContent = String(value);
+      }
+      tr.appendChild(td);
+    });
+
+    const scrapeTd = document.createElement('td');
+    if (row.representativeLink) {
+      const btnPrincipal = document.createElement('button');
+      btnPrincipal.type = 'button';
+      btnPrincipal.className = 'mini-btn scrape-btn';
+      btnPrincipal.setAttribute('data-url', encodeURIComponent(row.representativeLink));
+      btnPrincipal.textContent = 'Ver principal';
+      scrapeTd.appendChild(btnPrincipal);
+      scrapeTd.appendChild(document.createTextNode(' '));
+    } else {
+      scrapeTd.appendChild(document.createTextNode('- '));
+    }
+
+    const btnTxt = document.createElement('button');
+    btnTxt.type = 'button';
+    btnTxt.className = 'mini-btn llm-row-btn';
+    btnTxt.setAttribute('data-row-idx', String(idx));
+    btnTxt.textContent = 'TXT ChatGPT';
+    scrapeTd.appendChild(btnTxt);
+    tr.appendChild(scrapeTd);
+
+    stores.forEach((store) => {
+      const td = document.createElement('td');
+      const entry = row.pricesBySupermarket?.[store];
+      if (!entry) {
+        td.textContent = '-';
+        tr.appendChild(td);
+        return;
+      }
+
+      const priceText = formatPrice(entry.price, '-');
+      const stockText = entry.availability ? '' : ' (sin stock)';
+      td.appendChild(document.createTextNode(`${priceText}${stockText}`));
+
+      const promo = getPromoForCell(row, store, entry);
+      if (promo) {
+        rowHasPromo = true;
+        const promoWrap = document.createElement('div');
+        promoWrap.className = 'small';
+        const badge = document.createElement('span');
+        badge.className = 'badge promo';
+        badge.textContent = promo.promoType || 'promo';
+        promoWrap.appendChild(badge);
+        promoWrap.appendChild(document.createTextNode(` ${promo.promoText || ''}`));
+        td.appendChild(promoWrap);
+      }
+
+      if (entry.link) {
+        const btnWrap = document.createElement('div');
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'mini-btn scrape-btn';
+        btn.setAttribute('data-url', encodeURIComponent(entry.link));
+        btn.textContent = 'Ver HTML';
+        btnWrap.appendChild(btn);
+        td.appendChild(btnWrap);
+      }
+
+      tr.appendChild(td);
+    });
+
+    if (rowHasPromo) {
+      tr.classList.add('row-has-promo');
+    }
+    eanFilteredBody.appendChild(tr);
+  });
+
   const brandText = activeBrandFilter ? ` (marca: ${activeBrandFilter})` : '';
-  eanFilteredCount.textContent = `Quedaron ${rows.length} de ${totalCount} productos agrupados por EAN${brandText}.`;
+  eanFilteredCount.textContent = `Quedaron ${rows.length} de ${totalCount} productos agrupados por EAN${brandText}. Filas renderizadas: ${eanFilteredBody.children.length}.`;
 }
 
 function clearTables() {
@@ -317,6 +430,7 @@ function clearTables() {
   eanFilteredHead.innerHTML = '';
   eanFilteredBody.innerHTML = '';
   eanFilteredCount.textContent = '';
+  filteredRowsList = [];
 }
 
 async function pollExportJob(jobId) {
@@ -365,8 +479,12 @@ async function startLlmExport() {
     return;
   }
 
-  if (!latestSearchData.groupedByEanFiltered.length) {
-    exportProgress.textContent = 'No hay EAN filtrados para exportar.';
+  await startLlmExportForRows(latestSearchData.groupedByEanFiltered, 'Iniciando export completo...');
+}
+
+async function startLlmExportForRows(rowsToExport, initialMessage) {
+  if (!Array.isArray(rowsToExport) || !rowsToExport.length) {
+    exportProgress.textContent = 'No hay filas para exportar.';
     return;
   }
 
@@ -377,7 +495,7 @@ async function startLlmExport() {
 
   exportLlmBtn.disabled = true;
   exportDownloadLink.style.display = 'none';
-  exportProgress.textContent = 'Iniciando export...';
+  exportProgress.textContent = initialMessage || 'Iniciando export...';
 
   try {
     const response = await fetch('/api/export-llm-start', {
@@ -386,7 +504,7 @@ async function startLlmExport() {
       body: JSON.stringify({
         query: latestSearchData.query || '',
         brandFilter: latestSearchData.brandFilter || '',
-        groupedByEanFiltered: latestSearchData.groupedByEanFiltered
+        groupedByEanFiltered: rowsToExport
       })
     });
     const data = await response.json();
@@ -400,6 +518,22 @@ async function startLlmExport() {
     exportLlmBtn.disabled = false;
     exportProgress.textContent = `Error iniciando export: ${error.message}`;
   }
+}
+
+async function startLlmExportForSingleRow(rowIndex) {
+  const idx = Number(rowIndex);
+  if (!Number.isInteger(idx) || idx < 0 || idx >= filteredRowsList.length) {
+    exportProgress.textContent = 'No se encontro la fila seleccionada para exportar.';
+    return;
+  }
+
+  const row = filteredRowsList[idx];
+  if (!row) {
+    exportProgress.textContent = 'No se encontro la fila seleccionada para exportar.';
+    return;
+  }
+
+  await startLlmExportForRows([row], `Iniciando export rapido de fila (EAN: ${row.ean || 'sin ean'})...`);
 }
 
 function applyPromosFromTextarea() {
@@ -462,10 +596,18 @@ async function scrapeProductUrl(productUrl) {
 }
 
 eanFilteredBody.addEventListener('click', async (event) => {
-  const button = event.target.closest('.scrape-btn');
-  if (!button) return;
+  const rowExportBtn = event.target.closest('.llm-row-btn');
+  if (rowExportBtn) {
+    const rowIdx = rowExportBtn.getAttribute('data-row-idx');
+    if (rowIdx === null) return;
+    await startLlmExportForSingleRow(rowIdx);
+    return;
+  }
 
-  const encoded = button.getAttribute('data-url');
+  const scrapeBtn = event.target.closest('.scrape-btn');
+  if (!scrapeBtn) return;
+
+  const encoded = scrapeBtn.getAttribute('data-url');
   if (!encoded) return;
 
   const productUrl = decodeURIComponent(encoded);
