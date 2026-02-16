@@ -3,6 +3,8 @@ const productInput = document.getElementById('productInput');
 const statusBox = document.getElementById('status');
 
 const rawBody = document.querySelector('#rawTable tbody');
+const eanHead = document.querySelector('#eanTable thead');
+const eanBody = document.querySelector('#eanTable tbody');
 const filteredBody = document.querySelector('#filteredTable tbody');
 const groupedBody = document.querySelector('#groupedTable tbody');
 const scrapeStatusBox = document.getElementById('scrapeStatus');
@@ -112,6 +114,42 @@ function renderRaw(rows) {
   `).join('');
 }
 
+function renderGroupedByEan(rows, supermarkets) {
+  const stores = Array.isArray(supermarkets) ? supermarkets : [];
+  eanHead.innerHTML = `
+    <tr>
+      <th>EAN</th>
+      <th>Producto unificado</th>
+      <th>Marca</th>
+      <th>Descripcion</th>
+      <th>Coincidencias</th>
+      ${stores.map((s) => `<th>${escapeHtml(s)}</th>`).join('')}
+    </tr>
+  `;
+
+  eanBody.innerHTML = rows.map((row) => {
+    const cellsByStore = stores.map((store) => {
+      const entry = row.pricesBySupermarket?.[store];
+      if (!entry) return '<td>-</td>';
+
+      const priceText = formatPrice(entry.price, '-');
+      const stockText = entry.availability ? '' : ' (sin stock)';
+      return `<td>${escapeHtml(priceText)}${escapeHtml(stockText)}</td>`;
+    }).join('');
+
+    return `
+      <tr>
+        <td>${escapeHtml(row.ean || '-')}</td>
+        <td>${escapeHtml(row.unifiedName || '-')}</td>
+        <td>${escapeHtml(row.brand || '-')}</td>
+        <td><span class="small">${escapeHtml(row.unifiedDescription || '-')}</span></td>
+        <td>${row.sourceCount ?? '-'}</td>
+        ${cellsByStore}
+      </tr>
+    `;
+  }).join('');
+}
+
 function renderFiltered(rows) {
   filteredBody.innerHTML = rows.map((r) => {
     const offerBadge = r.hasOffer
@@ -161,6 +199,8 @@ function renderGrouped(rows) {
 
 function clearTables() {
   rawBody.innerHTML = '';
+  eanHead.innerHTML = '';
+  eanBody.innerHTML = '';
   filteredBody.innerHTML = '';
   groupedBody.innerHTML = '';
 }
@@ -232,11 +272,12 @@ searchForm.addEventListener('submit', async (event) => {
     }
 
     renderRaw(data.rawResults || []);
+    renderGroupedByEan(data.groupedByEan || [], data.supermarkets || []);
     renderFiltered(data.filteredResults || []);
     renderGrouped(data.groupedBySupermarket || []);
 
     const meta = data.meta || {};
-    setStatus(`Listo. API: ${meta.rawCount ?? 0} | Filtrados: ${meta.filteredCount ?? 0} | Supermercados: ${meta.groupedCount ?? 0}`);
+    setStatus(`Listo. API: ${meta.rawCount ?? 0} | EAN: ${meta.groupedByEanCount ?? 0} | Filtrados: ${meta.filteredCount ?? 0} | Supermercados: ${meta.groupedCount ?? 0}`);
   } catch (error) {
     clearTables();
     setStatus(`Error: ${error.message}`, true);

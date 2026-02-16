@@ -181,6 +181,82 @@ function addInitialOfferFields(product) {
   };
 }
 
+function pickRepresentativeProduct(products) {
+  if (!products.length) return null;
+
+  // Priorizamos disponible, luego descripción más completa, luego precio menor.
+  return [...products].sort((a, b) => {
+    const aAvail = a.availability ? 1 : 0;
+    const bAvail = b.availability ? 1 : 0;
+    if (aAvail !== bAvail) return bAvail - aAvail;
+
+    const aTextLen = `${a.name || ''} ${a.description || ''}`.trim().length;
+    const bTextLen = `${b.name || ''} ${b.description || ''}`.trim().length;
+    if (aTextLen !== bTextLen) return bTextLen - aTextLen;
+
+    const aPrice = typeof a.price === 'number' ? a.price : Number.POSITIVE_INFINITY;
+    const bPrice = typeof b.price === 'number' ? b.price : Number.POSITIVE_INFINITY;
+    return aPrice - bPrice;
+  })[0];
+}
+
+function pickStoreEntry(current, candidate) {
+  if (!current) return candidate;
+
+  // Si uno está disponible y el otro no, preferimos disponible.
+  if (current.availability !== candidate.availability) {
+    return candidate.availability ? candidate : current;
+  }
+
+  const currentPrice = typeof current.price === 'number' ? current.price : Number.POSITIVE_INFINITY;
+  const candidatePrice = typeof candidate.price === 'number' ? candidate.price : Number.POSITIVE_INFINITY;
+  return candidatePrice < currentPrice ? candidate : current;
+}
+
+function groupByEan(products) {
+  const byEan = new Map();
+  const supermarkets = new Set();
+
+  products.forEach((product, idx) => {
+    const eanKey = product.ean && product.ean.trim() ? product.ean.trim() : `SIN_EAN_${idx}`;
+    if (!byEan.has(eanKey)) {
+      byEan.set(eanKey, []);
+    }
+    byEan.get(eanKey).push(product);
+    if (product.supermarket) supermarkets.add(product.supermarket);
+  });
+
+  const rows = [];
+  for (const [ean, items] of byEan.entries()) {
+    const representative = pickRepresentativeProduct(items);
+    const pricesBySupermarket = {};
+
+    items.forEach((item) => {
+      const key = item.supermarket || 'Sin supermercado';
+      pricesBySupermarket[key] = pickStoreEntry(pricesBySupermarket[key], {
+        price: item.price,
+        originalPrice: item.originalPrice,
+        availability: item.availability,
+        link: item.link
+      });
+    });
+
+    rows.push({
+      ean,
+      unifiedName: representative ? representative.name : '',
+      unifiedDescription: representative ? representative.description : '',
+      brand: representative ? representative.brand : '',
+      pricesBySupermarket,
+      sourceCount: items.length
+    });
+  }
+
+  return {
+    supermarkets: Array.from(supermarkets).sort((a, b) => a.localeCompare(b)),
+    rows: rows.sort((a, b) => a.unifiedName.localeCompare(b.unifiedName))
+  };
+}
+
 async function fetchJson(url) {
   const response = await fetch(url, {
     headers: {
@@ -367,6 +443,7 @@ const server = http.createServer(async (req, res) => {
       const apiUrl = `https://www.preciosuper.com/api/products?product=${encodeURIComponent(product)}`;
       const rawPayload = await fetchJson(apiUrl);
       const rawResults = normalizeProducts(rawPayload);
+      const groupedByEan = groupByEan(rawResults);
       const filteredResults = filterByMatch(rawResults, product).map(addInitialOfferFields);
       const groupedBySupermarket = groupBySupermarket(filteredResults);
 
@@ -374,11 +451,14 @@ const server = http.createServer(async (req, res) => {
         query: product,
         meta: {
           rawCount: rawResults.length,
+          groupedByEanCount: groupedByEan.rows.length,
           filteredCount: filteredResults.length,
           groupedCount: groupedBySupermarket.length,
           generatedAt: new Date().toISOString()
         },
         rawResults,
+        groupedByEan: groupedByEan.rows,
+        supermarkets: groupedByEan.supermarkets,
         filteredResults,
         groupedBySupermarket
       });
