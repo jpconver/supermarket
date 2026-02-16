@@ -222,6 +222,7 @@ async function scrapeProductPage(url) {
 
     const extracted = await page.evaluate(() => {
       const bodyText = document.body ? document.body.innerText || '' : '';
+      const bodyHtml = document.body ? document.body.innerHTML || '' : '';
       const nodes = Array.from(
         document.querySelectorAll('[class*="promo"],[class*="offer"],[class*="discount"],[class*="price"],[id*="promo"],[id*="offer"],[id*="discount"],[data-testid*="price"],[data-testid*="promo"]')
       );
@@ -234,6 +235,7 @@ async function scrapeProductPage(url) {
 
       return {
         title: document.title || '',
+        bodyHtml,
         bodyText,
         candidateText
       };
@@ -251,6 +253,7 @@ async function scrapeProductPage(url) {
       hasOffer: mergedSignals.length > 0,
       offerSignals: mergedSignals,
       candidateText: extracted.candidateText,
+      bodyHtml: extracted.bodyHtml.slice(0, 300000),
       bodyTextSnippet: extracted.bodyText.slice(0, 8000),
       html: html.slice(0, 300000)
     };

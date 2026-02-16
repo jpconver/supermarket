@@ -8,6 +8,7 @@ const groupedBody = document.querySelector('#groupedTable tbody');
 const scrapeStatusBox = document.getElementById('scrapeStatus');
 const scrapeMeta = document.getElementById('scrapeMeta');
 const scrapeOutput = document.getElementById('scrapeOutput');
+const scrapePreview = document.getElementById('scrapePreview');
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -64,6 +65,35 @@ function setScrapeStatus(text, isError = false) {
 function setScrapePanel(metaText, content) {
   scrapeMeta.textContent = metaText || '';
   scrapeOutput.textContent = content || '';
+}
+
+function sanitizeHtmlForPreview(html) {
+  if (!html) return '<p>Sin HTML para mostrar</p>';
+
+  // Sanitizacion basica para vista: remueve scripts y etiquetas potencialmente conflictivas.
+  return String(html)
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, '')
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
+    .replace(/<base[^>]*>/gi, '');
+}
+
+function setPreviewHtml(html) {
+  if (!scrapePreview) return;
+  const safeBody = sanitizeHtmlForPreview(html);
+  scrapePreview.srcdoc = `<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: Arial, sans-serif; margin: 12px; color: #1e2a39; }
+    img { max-width: 100%; height: auto; }
+    a { color: #0e7490; }
+  </style>
+</head>
+<body>${safeBody}</body>
+</html>`;
 }
 
 function renderRaw(rows) {
@@ -138,6 +168,7 @@ function clearTables() {
 async function scrapeProductUrl(productUrl) {
   setScrapeStatus('Scrapeando producto con navegador...');
   setScrapePanel('', '');
+  setPreviewHtml('<p>Cargando preview...</p>');
 
   try {
     const response = await fetch(`/api/scrape-product?url=${encodeURIComponent(productUrl)}`);
@@ -160,9 +191,11 @@ async function scrapeProductUrl(productUrl) {
     ].join('\n');
 
     setScrapePanel(metaText, combined);
+    setPreviewHtml(data.bodyHtml || data.html || '<p>Sin HTML</p>');
     setScrapeStatus('Scraping completo.');
   } catch (error) {
     setScrapePanel('', '');
+    setPreviewHtml('<p>Error al generar preview.</p>');
     setScrapeStatus(`Error scraping: ${error.message}`, true);
   }
 }
@@ -188,6 +221,7 @@ searchForm.addEventListener('submit', async (event) => {
   setStatus('Buscando precios y evaluando ofertas...');
   setScrapeStatus('');
   setScrapePanel('', '');
+  setPreviewHtml('');
 
   try {
     const response = await fetch(`/api/search?product=${encodeURIComponent(product)}`);
