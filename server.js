@@ -18,6 +18,14 @@ const OFFER_PATTERNS = [
   /\bll[eé]vate\b/i
 ];
 
+let playwrightLib = null;
+
+try {
+  playwrightLib = require('playwright');
+} catch {
+  playwrightLib = null;
+}
+
 function safeJsonParse(text) {
   try {
     return JSON.parse(text);
@@ -147,8 +155,30 @@ function detectOfferFromHtml(html) {
   };
 }
 
+function detectOfferFromText(text) {
+  const compact = String(text || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const matched = OFFER_PATTERNS.filter((re) => re.test(compact)).map((re) => re.source);
+  return {
+    hasOffer: matched.length > 0,
+    signals: matched
+  };
+}
+
 function hasApiOffer(product) {
   return typeof product.discountPercentage === 'number' && product.discountPercentage > 0;
+}
+
+function addInitialOfferFields(product) {
+  const apiOffer = hasApiOffer(product);
+  return {
+    ...product,
+    hasOffer: apiOffer,
+    offerSignals: apiOffer ? ['api_discount'] : [],
+    offerDetail: apiOffer ? `Descuento API: ${product.discountPercentage}%` : 'Pendiente scraping manual',
+    offerError: null
+  };
 }
 
 async function fetchJson(url) {
@@ -168,63 +198,66 @@ async function fetchJson(url) {
   return json;
 }
 
-async function fetchOfferForProduct(product) {
-  const apiOffer = hasApiOffer(product);
-
-  if (!product.link) {
-    return {
-      ...product,
-      hasOffer: apiOffer,
-      offerSignals: apiOffer ? ['api_discount'] : [],
-      offerError: 'Sin link del producto'
-    };
+async function scrapeProductPage(url) {
+  if (!playwrightLib || !playwrightLib.chromium) {
+    throw new Error('Playwright no instalado');
   }
+
+  const browser = await playwrightLib.chromium.launch({ headless: true });
+  const page = await browser.newPage();
 
   try {
-    const response = await fetch(product.link, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; SupermarketPriceBot/1.0)'
-      }
+    await page.goto(url, {
+      waitUntil: 'domcontentloaded',
+      timeout: 35000
     });
 
-    if (!response.ok) {
-      return {
-        ...product,
-        hasOffer: apiOffer,
-        offerSignals: apiOffer ? ['api_discount'] : [],
-        offerError: `No se pudo abrir link (${response.status})`
-      };
+    try {
+      await page.waitForLoadState('networkidle', { timeout: 8000 });
+    } catch {
+      // Algunos sitios mantienen conexiones abiertas y no alcanzan networkidle.
     }
 
-    const html = await response.text();
-    const offer = detectOfferFromHtml(html);
+    await page.waitForTimeout(1200);
+
+    const extracted = await page.evaluate(() => {
+      const bodyText = document.body ? document.body.innerText || '' : '';
+      const nodes = Array.from(
+        document.querySelectorAll('[class*="promo"],[class*="offer"],[class*="discount"],[class*="price"],[id*="promo"],[id*="offer"],[id*="discount"],[data-testid*="price"],[data-testid*="promo"]')
+      );
+
+      const candidateText = nodes
+        .map((node) => (node.innerText || '').trim())
+        .filter(Boolean)
+        .slice(0, 150)
+        .join('\n');
+
+      return {
+        title: document.title || '',
+        bodyText,
+        candidateText
+      };
+    });
+
+    const html = await page.content();
+
+    const offerFromText = detectOfferFromText(`${extracted.title}\n${extracted.candidateText}\n${extracted.bodyText}`);
+    const offerFromHtml = detectOfferFromHtml(html);
+    const mergedSignals = Array.from(new Set([...offerFromText.signals, ...offerFromHtml.signals]));
 
     return {
-      ...product,
-      hasOffer: apiOffer || offer.hasOffer,
-      offerSignals: [...(apiOffer ? ['api_discount'] : []), ...offer.signals],
-      offerError: null
+      url,
+      title: extracted.title,
+      hasOffer: mergedSignals.length > 0,
+      offerSignals: mergedSignals,
+      candidateText: extracted.candidateText,
+      bodyTextSnippet: extracted.bodyText.slice(0, 8000),
+      html: html.slice(0, 300000)
     };
-  } catch (error) {
-    return {
-      ...product,
-      hasOffer: apiOffer,
-      offerSignals: apiOffer ? ['api_discount'] : [],
-      offerError: error.message
-    };
+  } finally {
+    await page.close();
+    await browser.close();
   }
-}
-
-async function enrichOffers(products, limit = 6) {
-  const toProcess = products.slice(0, limit);
-  const enriched = await Promise.all(toProcess.map(fetchOfferForProduct));
-  const untouched = products.slice(limit).map((p) => ({
-    ...p,
-    hasOffer: hasApiOffer(p),
-    offerSignals: hasApiOffer(p) ? ['api_discount'] : [],
-    offerError: 'No evaluado por limite de scraping'
-  }));
-  return [...enriched, ...untouched];
 }
 
 function groupBySupermarket(products) {
@@ -251,6 +284,7 @@ function groupBySupermarket(products) {
     const row = grouped.get(key);
     row.productCount += 1;
     row.products.push(product);
+
     if (product.availability) {
       row.availableCount += 1;
     } else {
@@ -330,25 +364,50 @@ const server = http.createServer(async (req, res) => {
       const apiUrl = `https://www.preciosuper.com/api/products?product=${encodeURIComponent(product)}`;
       const rawPayload = await fetchJson(apiUrl);
       const rawResults = normalizeProducts(rawPayload);
-      const filteredResults = filterByMatch(rawResults, product);
-      const filteredWithOffers = await enrichOffers(filteredResults, 8);
-      const groupedBySupermarket = groupBySupermarket(filteredWithOffers);
+      const filteredResults = filterByMatch(rawResults, product).map(addInitialOfferFields);
+      const groupedBySupermarket = groupBySupermarket(filteredResults);
 
       sendJson(res, 200, {
         query: product,
         meta: {
           rawCount: rawResults.length,
-          filteredCount: filteredWithOffers.length,
+          filteredCount: filteredResults.length,
           groupedCount: groupedBySupermarket.length,
           generatedAt: new Date().toISOString()
         },
         rawResults,
-        filteredResults: filteredWithOffers,
+        filteredResults,
         groupedBySupermarket
       });
     } catch (error) {
       sendJson(res, 502, {
         error: 'No se pudo consultar preciosuper o procesar datos',
+        detail: error.message
+      });
+    }
+
+    return;
+  }
+
+  if (url.pathname === '/api/scrape-product' && req.method === 'GET') {
+    const productUrl = (url.searchParams.get('url') || '').trim();
+
+    if (!productUrl) {
+      sendJson(res, 400, { error: 'Falta query param: url' });
+      return;
+    }
+
+    if (!/^https?:\/\//i.test(productUrl)) {
+      sendJson(res, 400, { error: 'URL invalida. Debe comenzar con http:// o https://' });
+      return;
+    }
+
+    try {
+      const scraped = await scrapeProductPage(productUrl);
+      sendJson(res, 200, scraped);
+    } catch (error) {
+      sendJson(res, 502, {
+        error: 'No se pudo scrapear la URL del producto',
         detail: error.message
       });
     }

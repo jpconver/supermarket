@@ -66,6 +66,20 @@ h1 {
   background: var(--primary-dark);
 }
 
+.mini-btn {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #f8fafc;
+  color: var(--text);
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.mini-btn:hover {
+  background: #eef2f7;
+}
+
 .status {
   margin: 8px 0 16px;
   min-height: 20px;
@@ -128,6 +142,19 @@ th {
 
 .small {
   color: var(--muted);
+  font-size: 12px;
+}
+
+.code-view {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #0b1220;
+  color: #dbe7ff;
+  border-radius: 8px;
+  padding: 12px;
+  max-height: 420px;
+  overflow: auto;
   font-size: 12px;
 }
 

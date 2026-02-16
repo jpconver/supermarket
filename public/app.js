@@ -5,6 +5,9 @@ const statusBox = document.getElementById('status');
 const rawBody = document.querySelector('#rawTable tbody');
 const filteredBody = document.querySelector('#filteredTable tbody');
 const groupedBody = document.querySelector('#groupedTable tbody');
+const scrapeStatusBox = document.getElementById('scrapeStatus');
+const scrapeMeta = document.getElementById('scrapeMeta');
+const scrapeOutput = document.getElementById('scrapeOutput');
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -53,6 +56,16 @@ function setStatus(text, isError = false) {
   statusBox.style.color = isError ? '#b42318' : '#576779';
 }
 
+function setScrapeStatus(text, isError = false) {
+  scrapeStatusBox.textContent = text;
+  scrapeStatusBox.style.color = isError ? '#b42318' : '#576779';
+}
+
+function setScrapePanel(metaText, content) {
+  scrapeMeta.textContent = metaText || '';
+  scrapeOutput.textContent = content || '';
+}
+
 function renderRaw(rows) {
   rawBody.innerHTML = rows.map((r) => `
     <tr>
@@ -76,7 +89,7 @@ function renderFiltered(rows) {
       : '<span class="badge no">NO</span>';
 
     const detail = r.hasOffer
-      ? (r.offerSignals?.join(', ') || 'Patrones detectados')
+      ? ([r.offerDetail, r.offerEvidence, r.offerSignals?.join(', ')].filter(Boolean).join(' | ') || 'Patrones detectados')
       : (r.offerError || '-');
 
     return `
@@ -92,6 +105,7 @@ function renderFiltered(rows) {
         <td>${scoreText(r.matchScore)}</td>
         <td>${offerBadge}</td>
         <td><span class="small">${escapeHtml(detail)}</span></td>
+        <td>${r.link ? `<button type="button" class="mini-btn scrape-btn" data-url="${encodeURIComponent(r.link)}">Ver HTML</button>` : '-'}</td>
         <td>${linkCell(r.link)}</td>
       </tr>
     `;
@@ -121,6 +135,49 @@ function clearTables() {
   groupedBody.innerHTML = '';
 }
 
+async function scrapeProductUrl(productUrl) {
+  setScrapeStatus('Scrapeando producto con navegador...');
+  setScrapePanel('', '');
+
+  try {
+    const response = await fetch(`/api/scrape-product?url=${encodeURIComponent(productUrl)}`);
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data?.detail || data?.error || 'Error desconocido');
+    }
+
+    const metaText = `URL: ${data.url} | Titulo: ${data.title || '-'} | Oferta detectada: ${data.hasOffer ? 'SI' : 'NO'} | Senales: ${(data.offerSignals || []).join(', ') || '-'}`;
+    const combined = [
+      '===== CANDIDATOS DE OFERTA =====',
+      data.candidateText || '(sin candidatos)',
+      '',
+      '===== TEXTO VISIBLE (SNIPPET) =====',
+      data.bodyTextSnippet || '(sin texto)',
+      '',
+      '===== HTML =====',
+      data.html || '(sin html)'
+    ].join('\n');
+
+    setScrapePanel(metaText, combined);
+    setScrapeStatus('Scraping completo.');
+  } catch (error) {
+    setScrapePanel('', '');
+    setScrapeStatus(`Error scraping: ${error.message}`, true);
+  }
+}
+
+filteredBody.addEventListener('click', async (event) => {
+  const button = event.target.closest('.scrape-btn');
+  if (!button) return;
+
+  const encoded = button.getAttribute('data-url');
+  if (!encoded) return;
+
+  const productUrl = decodeURIComponent(encoded);
+  await scrapeProductUrl(productUrl);
+});
+
 searchForm.addEventListener('submit', async (event) => {
   event.preventDefault();
 
@@ -129,6 +186,8 @@ searchForm.addEventListener('submit', async (event) => {
 
   clearTables();
   setStatus('Buscando precios y evaluando ofertas...');
+  setScrapeStatus('');
+  setScrapePanel('', '');
 
   try {
     const response = await fetch(`/api/search?product=${encodeURIComponent(product)}`);
