@@ -138,7 +138,10 @@ function renderGroupedByEanTable(headEl, bodyEl, rows, supermarkets, withMatchSc
 
       const priceText = formatPrice(entry.price, '-');
       const stockText = entry.availability ? '' : ' (sin stock)';
-      return `<td>${escapeHtml(priceText)}${escapeHtml(stockText)}</td>`;
+      const scrapeBtn = withScrape && entry.link
+        ? `<div><button type="button" class="mini-btn scrape-btn" data-url="${encodeURIComponent(entry.link)}">Ver HTML</button></div>`
+        : '';
+      return `<td>${escapeHtml(priceText)}${escapeHtml(stockText)}${scrapeBtn}</td>`;
     }).join('');
 
     return `
@@ -149,7 +152,7 @@ function renderGroupedByEanTable(headEl, bodyEl, rows, supermarkets, withMatchSc
         <td><span class="small">${escapeHtml(row.unifiedDescription || '-')}</span></td>
         <td>${row.sourceCount ?? '-'}</td>
         ${withMatchScore ? `<td>${scoreText(row.eanMatchScore)}</td>` : ''}
-        ${withScrape ? `<td>${row.representativeLink ? `<button type="button" class="mini-btn scrape-btn" data-url="${encodeURIComponent(row.representativeLink)}">Ver HTML</button>` : '-'}</td>` : ''}
+        ${withScrape ? `<td>${row.representativeLink ? `<button type="button" class="mini-btn scrape-btn" data-url="${encodeURIComponent(row.representativeLink)}">Ver principal</button>` : '-'}</td>` : ''}
         ${cellsByStore}
       </tr>
     `;
