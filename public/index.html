@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Comparador de Supermercados</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>Comparador de Precios</h1>
+    <p class="subtitle">Busca un producto, revisa el resultado completo, el filtrado y el resumen por supermercado.</p>
+
+    <form id="searchForm" class="search-form">
+      <input
+        id="productInput"
+        name="product"
+        type="text"
+        placeholder="Ej: Yogur Firme Yogurisimo Frutilla 120 G"
+        required
+      />
+      <button type="submit">Buscar</button>
+    </form>
+
+    <div id="status" class="status"></div>
+
+    <section>
+      <h2>1) Salida completa de API</h2>
+      <div class="table-wrap">
+        <table id="rawTable">
+          <thead>
+            <tr>
+              <th>EAN</th>
+              <th>Nombre</th>
+              <th>Marca</th>
+              <th>Supermercado</th>
+              <th>Disponible</th>
+              <th>Precio Orig.</th>
+              <th>% Desc.</th>
+              <th>Precio Act.</th>
+              <th>Link</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>2) Resultados filtrados por matching</h2>
+      <div class="table-wrap">
+        <table id="filteredTable">
+          <thead>
+            <tr>
+              <th>EAN</th>
+              <th>Nombre</th>
+              <th>Marca</th>
+              <th>Supermercado</th>
+              <th>Disponible</th>
+              <th>Precio</th>
+              <th>Precio Orig.</th>
+              <th>% Desc.</th>
+              <th>Match</th>
+              <th>Oferta</th>
+              <th>Detalle</th>
+              <th>Link</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>3) Resumen por supermercado</h2>
+      <div class="table-wrap">
+        <table id="groupedTable">
+          <thead>
+            <tr>
+              <th>Supermercado</th>
+              <th>Productos</th>
+              <th>Disponibles</th>
+              <th>No disp.</th>
+              <th>Precio Mín</th>
+              <th>Precio Mín Disp.</th>
+              <th>Precio Prom</th>
+              <th>Precio Máx</th>
+              <th>¿Tiene ofertas?</th>
+              <th>Cant. ofertas</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

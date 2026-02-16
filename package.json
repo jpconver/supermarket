@@ -1,0 +1,13 @@
+{
+  "name": "supermarket-comparator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Comparador de precios de supermercados con deteccion basica de ofertas",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
