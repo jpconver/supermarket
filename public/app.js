@@ -5,8 +5,9 @@ const statusBox = document.getElementById('status');
 const rawBody = document.querySelector('#rawTable tbody');
 const eanHead = document.querySelector('#eanTable thead');
 const eanBody = document.querySelector('#eanTable tbody');
-const filteredBody = document.querySelector('#filteredTable tbody');
-const groupedBody = document.querySelector('#groupedTable tbody');
+const eanFilteredHead = document.querySelector('#eanFilteredTable thead');
+const eanFilteredBody = document.querySelector('#eanFilteredTable tbody');
+const eanFilteredCount = document.getElementById('eanFilteredCount');
 const scrapeStatusBox = document.getElementById('scrapeStatus');
 const scrapeMeta = document.getElementById('scrapeMeta');
 const scrapeOutput = document.getElementById('scrapeOutput');
@@ -114,20 +115,22 @@ function renderRaw(rows) {
   `).join('');
 }
 
-function renderGroupedByEan(rows, supermarkets) {
+function renderGroupedByEanTable(headEl, bodyEl, rows, supermarkets, withMatchScore = false, withScrape = false) {
   const stores = Array.isArray(supermarkets) ? supermarkets : [];
-  eanHead.innerHTML = `
+  headEl.innerHTML = `
     <tr>
       <th>EAN</th>
       <th>Producto unificado</th>
       <th>Marca</th>
       <th>Descripcion</th>
       <th>Coincidencias</th>
+      ${withMatchScore ? '<th>Match</th>' : ''}
+      ${withScrape ? '<th>Scraping</th>' : ''}
       ${stores.map((s) => `<th>${escapeHtml(s)}</th>`).join('')}
     </tr>
   `;
 
-  eanBody.innerHTML = rows.map((row) => {
+  bodyEl.innerHTML = rows.map((row) => {
     const cellsByStore = stores.map((store) => {
       const entry = row.pricesBySupermarket?.[store];
       if (!entry) return '<td>-</td>';
@@ -144,65 +147,30 @@ function renderGroupedByEan(rows, supermarkets) {
         <td>${escapeHtml(row.brand || '-')}</td>
         <td><span class="small">${escapeHtml(row.unifiedDescription || '-')}</span></td>
         <td>${row.sourceCount ?? '-'}</td>
+        ${withMatchScore ? `<td>${scoreText(row.eanMatchScore)}</td>` : ''}
+        ${withScrape ? `<td>${row.representativeLink ? `<button type="button" class="mini-btn scrape-btn" data-url="${encodeURIComponent(row.representativeLink)}">Ver HTML</button>` : '-'}</td>` : ''}
         ${cellsByStore}
       </tr>
     `;
   }).join('');
 }
 
-function renderFiltered(rows) {
-  filteredBody.innerHTML = rows.map((r) => {
-    const offerBadge = r.hasOffer
-      ? '<span class="badge ok">SI</span>'
-      : '<span class="badge no">NO</span>';
-
-    const detail = r.hasOffer
-      ? ([r.offerDetail, r.offerEvidence, r.offerSignals?.join(', ')].filter(Boolean).join(' | ') || 'Patrones detectados')
-      : (r.offerError || '-');
-
-    return `
-      <tr>
-        <td>${escapeHtml(r.ean || '-')}</td>
-        <td>${escapeHtml(r.name || '-')}</td>
-        <td>${escapeHtml(r.brand || '-')}</td>
-        <td>${escapeHtml(r.supermarket || '-')}</td>
-        <td>${availabilityCell(r.availability)}</td>
-        <td>${formatPrice(r.price, r.priceRaw?.amount)}</td>
-        <td>${formatPrice(r.originalPrice, '-')}</td>
-        <td>${discountText(r.discountPercentage)}</td>
-        <td>${scoreText(r.matchScore)}</td>
-        <td>${offerBadge}</td>
-        <td><span class="small">${escapeHtml(detail)}</span></td>
-        <td>${r.link ? `<button type="button" class="mini-btn scrape-btn" data-url="${encodeURIComponent(r.link)}">Ver HTML</button>` : '-'}</td>
-        <td>${linkCell(r.link)}</td>
-      </tr>
-    `;
-  }).join('');
+function renderGroupedByEan(rows, supermarkets) {
+  renderGroupedByEanTable(eanHead, eanBody, rows, supermarkets, false);
 }
 
-function renderGrouped(rows) {
-  groupedBody.innerHTML = rows.map((r) => `
-    <tr>
-      <td>${escapeHtml(r.supermarket)}</td>
-      <td>${r.productCount}</td>
-      <td>${r.availableCount}</td>
-      <td>${r.unavailableCount}</td>
-      <td>${formatPrice(r.minPrice)}</td>
-      <td>${formatPrice(r.minAvailablePrice)}</td>
-      <td>${formatPrice(r.avgPrice)}</td>
-      <td>${formatPrice(r.maxPrice)}</td>
-      <td>${r.anyOffer ? '<span class="badge ok">SI</span>' : '<span class="badge no">NO</span>'}</td>
-      <td>${r.offerCount}</td>
-    </tr>
-  `).join('');
+function renderGroupedByEanFiltered(rows, supermarkets, totalCount) {
+  renderGroupedByEanTable(eanFilteredHead, eanFilteredBody, rows, supermarkets, true, true);
+  eanFilteredCount.textContent = `Quedaron ${rows.length} de ${totalCount} productos agrupados por EAN.`;
 }
 
 function clearTables() {
   rawBody.innerHTML = '';
   eanHead.innerHTML = '';
   eanBody.innerHTML = '';
-  filteredBody.innerHTML = '';
-  groupedBody.innerHTML = '';
+  eanFilteredHead.innerHTML = '';
+  eanFilteredBody.innerHTML = '';
+  eanFilteredCount.textContent = '';
 }
 
 async function scrapeProductUrl(productUrl) {
@@ -240,7 +208,7 @@ async function scrapeProductUrl(productUrl) {
   }
 }
 
-filteredBody.addEventListener('click', async (event) => {
+eanFilteredBody.addEventListener('click', async (event) => {
   const button = event.target.closest('.scrape-btn');
   if (!button) return;
 
@@ -273,11 +241,14 @@ searchForm.addEventListener('submit', async (event) => {
 
     renderRaw(data.rawResults || []);
     renderGroupedByEan(data.groupedByEan || [], data.supermarkets || []);
-    renderFiltered(data.filteredResults || []);
-    renderGrouped(data.groupedBySupermarket || []);
+    renderGroupedByEanFiltered(
+      data.groupedByEanFiltered || [],
+      data.supermarkets || [],
+      data.meta?.groupedByEanCount ?? 0
+    );
 
     const meta = data.meta || {};
-    setStatus(`Listo. API: ${meta.rawCount ?? 0} | EAN: ${meta.groupedByEanCount ?? 0} | Filtrados: ${meta.filteredCount ?? 0} | Supermercados: ${meta.groupedCount ?? 0}`);
+    setStatus(`Listo. API: ${meta.rawCount ?? 0} | EAN: ${meta.groupedByEanCount ?? 0} | EAN filtrados: ${meta.groupedByEanFilteredCount ?? 0}`);
   } catch (error) {
     clearTables();
     setStatus(`Error: ${error.message}`, true);

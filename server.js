@@ -133,13 +133,6 @@ function scoreMatch(query, target) {
   return matches / q.length;
 }
 
-function filterByMatch(products, query, threshold = 0.55) {
-  return products
-    .map((p) => ({ ...p, matchScore: scoreMatch(query, `${p.name} ${p.brand} ${p.description}`) }))
-    .filter((p) => p.matchScore >= threshold)
-    .sort((a, b) => b.matchScore - a.matchScore);
-}
-
 function detectOfferFromHtml(html) {
   const compact = String(html)
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
@@ -163,21 +156,6 @@ function detectOfferFromText(text) {
   return {
     hasOffer: matched.length > 0,
     signals: matched
-  };
-}
-
-function hasApiOffer(product) {
-  return typeof product.discountPercentage === 'number' && product.discountPercentage > 0;
-}
-
-function addInitialOfferFields(product) {
-  const apiOffer = hasApiOffer(product);
-  return {
-    ...product,
-    hasOffer: apiOffer,
-    offerSignals: apiOffer ? ['api_discount'] : [],
-    offerDetail: apiOffer ? `Descuento API: ${product.discountPercentage}%` : 'Pendiente scraping manual',
-    offerError: null
   };
 }
 
@@ -246,6 +224,7 @@ function groupByEan(products) {
       unifiedName: representative ? representative.name : '',
       unifiedDescription: representative ? representative.description : '',
       brand: representative ? representative.brand : '',
+      representativeLink: representative ? representative.link : null,
       pricesBySupermarket,
       sourceCount: items.length
     });
@@ -255,6 +234,17 @@ function groupByEan(products) {
     supermarkets: Array.from(supermarkets).sort((a, b) => a.localeCompare(b)),
     rows: rows.sort((a, b) => a.unifiedName.localeCompare(b.unifiedName))
   };
+}
+
+function filterGroupedByEan(rows, query, threshold = 0.55) {
+  return rows
+    .map((row) => {
+      const searchableText = `${row.unifiedDescription || ''} ${row.unifiedName || ''} ${row.brand || ''}`;
+      const eanMatchScore = scoreMatch(query, searchableText);
+      return { ...row, eanMatchScore };
+    })
+    .filter((row) => row.eanMatchScore >= threshold)
+    .sort((a, b) => b.eanMatchScore - a.eanMatchScore);
 }
 
 async function fetchJson(url) {
@@ -339,63 +329,6 @@ async function scrapeProductPage(url) {
   }
 }
 
-function groupBySupermarket(products) {
-  const grouped = new Map();
-
-  for (const product of products) {
-    const key = product.supermarket;
-    if (!grouped.has(key)) {
-      grouped.set(key, {
-        supermarket: key,
-        productCount: 0,
-        availableCount: 0,
-        unavailableCount: 0,
-        minPrice: null,
-        maxPrice: null,
-        avgPrice: null,
-        minAvailablePrice: null,
-        offerCount: 0,
-        anyOffer: false,
-        products: []
-      });
-    }
-
-    const row = grouped.get(key);
-    row.productCount += 1;
-    row.products.push(product);
-
-    if (product.availability) {
-      row.availableCount += 1;
-    } else {
-      row.unavailableCount += 1;
-    }
-
-    if (typeof product.price === 'number') {
-      row.minPrice = row.minPrice === null ? product.price : Math.min(row.minPrice, product.price);
-      row.maxPrice = row.maxPrice === null ? product.price : Math.max(row.maxPrice, product.price);
-      if (product.availability) {
-        row.minAvailablePrice = row.minAvailablePrice === null
-          ? product.price
-          : Math.min(row.minAvailablePrice, product.price);
-      }
-    }
-
-    if (product.hasOffer) {
-      row.offerCount += 1;
-      row.anyOffer = true;
-    }
-  }
-
-  for (const row of grouped.values()) {
-    const priced = row.products.filter((p) => typeof p.price === 'number');
-    row.avgPrice = priced.length
-      ? priced.reduce((acc, p) => acc + p.price, 0) / priced.length
-      : null;
-  }
-
-  return Array.from(grouped.values()).sort((a, b) => a.supermarket.localeCompare(b.supermarket));
-}
-
 function sendJson(res, statusCode, payload) {
   res.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(payload, null, 2));
@@ -444,23 +377,20 @@ const server = http.createServer(async (req, res) => {
       const rawPayload = await fetchJson(apiUrl);
       const rawResults = normalizeProducts(rawPayload);
       const groupedByEan = groupByEan(rawResults);
-      const filteredResults = filterByMatch(rawResults, product).map(addInitialOfferFields);
-      const groupedBySupermarket = groupBySupermarket(filteredResults);
+      const groupedByEanFiltered = filterGroupedByEan(groupedByEan.rows, product);
 
       sendJson(res, 200, {
         query: product,
         meta: {
           rawCount: rawResults.length,
           groupedByEanCount: groupedByEan.rows.length,
-          filteredCount: filteredResults.length,
-          groupedCount: groupedBySupermarket.length,
+          groupedByEanFilteredCount: groupedByEanFiltered.length,
           generatedAt: new Date().toISOString()
         },
         rawResults,
         groupedByEan: groupedByEan.rows,
-        supermarkets: groupedByEan.supermarkets,
-        filteredResults,
-        groupedBySupermarket
+        groupedByEanFiltered,
+        supermarkets: groupedByEan.supermarkets
       });
     } catch (error) {
       sendJson(res, 502, {
